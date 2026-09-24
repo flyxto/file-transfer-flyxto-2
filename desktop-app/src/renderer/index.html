@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Flyxto Desktop Receiver</title>
+  <link rel="stylesheet" href="styles.css">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="app-container">
+    <header class="glass-panel header">
+      <div class="server-info">
+        <h1>Video Receiver</h1>
+        <div class="status-badge" id="status-badge">
+          <span class="indicator red"></span> Stopped
+        </div>
+      </div>
+      <div class="connection-details">
+        <div class="detail-box">
+          <span class="label">IP Address</span>
+          <span class="value" id="ip-address">--</span>
+        </div>
+        <div class="detail-box">
+          <span class="label">Port</span>
+          <span class="value" id="port">--</span>
+        </div>
+      </div>
+    </header>
+
+    <main class="main-content">
+      <div class="glass-panel files-section">
+        <div class="section-header">
+          <h2>Received Videos</h2>
+          <span class="badge" id="file-count">0</span>
+        </div>
+        
+        <div class="table-container">
+          <table id="files-table">
+            <thead>
+              <tr>
+                <th>File Name</th>
+                <th>Size</th>
+                <th>Time</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="files-body">
+              <tr class="empty-state">
+                <td colspan="4">No videos received yet. Waiting for uploads...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      
+      <div class="side-panel">
+        <div class="glass-panel settings-section">
+          <h2>Settings</h2>
+          <div class="setting-item">
+            <label>Save Location</label>
+            <div class="save-path-box" id="save-path" title="">--</div>
+            <button class="btn secondary" id="btn-change-folder">Change Folder</button>
+          </div>
+          
+          <div class="setting-item actions">
+            <button class="btn primary" id="btn-start-server">Start Server</button>
+            <button class="btn danger hidden" id="btn-stop-server">Stop Server</button>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+  
+  <script src="renderer.js"></script>
+</body>
+</html>
