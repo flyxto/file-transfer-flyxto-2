@@ -45,7 +45,10 @@ function startServer(mainWindow) {
     const filePath = path.join(saveDirectory, filename);
     
     console.log(`Receiving raw file stream to: ${filePath}`);
-    const writeStream = fs.createWriteStream(filePath);
+    // 1MB write buffer (vs default 16KB) — 64x fewer syscalls for large files
+    const writeStream = fs.createWriteStream(filePath, {
+      highWaterMark: 1024 * 1024
+    });
     
     req.pipe(writeStream);
 
@@ -80,6 +83,12 @@ function startServer(mainWindow) {
       mainWindow.webContents.send('server-status-changed', getServerStatus());
     }
   });
+
+  // Optimize every incoming TCP connection for throughput
+  serverInstance.on('connection', (socket) => {
+    socket.setNoDelay(true);   // Disable Nagle's algorithm — send data immediately
+    socket.setKeepAlive(true); // Reuse connections, avoid TCP handshake overhead
+  });
 }
 
 function stopServer() {
@@ -92,11 +101,19 @@ function stopServer() {
 }
 
 function getServerStatus() {
+  // Try to include TCP status if available
+  let tcpStatus = { isRunning: false, port: 3002 };
+  try {
+    const { getTCPServerStatus } = require('./tcpServer');
+    tcpStatus = getTCPServerStatus();
+  } catch (e) { /* TCP server module not loaded yet */ }
+
   return {
     isRunning: !!serverInstance,
     ip: getLocalIP(),
     port: port,
-    saveDirectory: saveDirectory
+    saveDirectory: saveDirectory,
+    tcp: tcpStatus,
   };
 }
 

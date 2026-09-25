@@ -3,6 +3,7 @@ const btnStop = document.getElementById('btn-stop-server');
 const btnChangeFolder = document.getElementById('btn-change-folder');
 const ipDisplay = document.getElementById('ip-address');
 const portDisplay = document.getElementById('port');
+const tcpPortDisplay = document.getElementById('tcp-port');
 const savePathDisplay = document.getElementById('save-path');
 const statusBadge = document.getElementById('status-badge');
 const filesBody = document.getElementById('files-body');
@@ -30,6 +31,12 @@ function updateStatusUI(status) {
   portDisplay.innerText = status.port;
   savePathDisplay.innerText = status.saveDirectory;
   savePathDisplay.title = status.saveDirectory;
+
+  // Show TCP port if available
+  if (status.tcp) {
+    tcpPortDisplay.innerText = status.tcp.isRunning ? status.tcp.port : 'Off';
+    tcpPortDisplay.style.opacity = status.tcp.isRunning ? '1' : '0.4';
+  }
 
   if (status.isRunning) {
     statusBadge.innerHTML = '<span class="indicator green"></span> Running';

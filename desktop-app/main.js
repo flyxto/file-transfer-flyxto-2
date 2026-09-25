@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const { startServer, stopServer, getServerStatus } = require('./src/server/fileServer');
+const { startTCPServer, stopTCPServer, getTCPServerStatus } = require('./src/server/tcpServer');
 
 let mainWindow;
 
@@ -22,8 +23,9 @@ function createWindow() {
 app.whenReady().then(() => {
   createWindow();
 
-  // Start the server by default
+  // Start both HTTP and TCP servers by default
   startServer(mainWindow);
+  startTCPServer(mainWindow);
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -45,10 +47,12 @@ ipcMain.handle('get-server-status', () => {
 
 ipcMain.on('start-server', () => {
   startServer(mainWindow);
+  startTCPServer(mainWindow);
 });
 
 ipcMain.on('stop-server', () => {
   stopServer();
+  stopTCPServer();
 });
 
 ipcMain.handle('select-directory', async () => {

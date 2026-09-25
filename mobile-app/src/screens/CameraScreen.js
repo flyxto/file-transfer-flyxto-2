@@ -1,7 +1,8 @@
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, Modal, ScrollView } from 'react-native';
 import { CameraView, useCameraPermissions, useMicrophonePermissions } from 'expo-camera';
 import { uploadVideo } from '../services/transferService';
+import { isTCPAvailable, uploadVideoTCP } from '../services/tcpTransferService';
 
 export default function CameraScreen({ serverIP, onReset }) {
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
@@ -22,6 +23,20 @@ export default function CameraScreen({ serverIP, onReset }) {
   const [stabilization, setStabilization] = useState('cinematic');
   const [autofocus, setAutofocus] = useState('on');
   const [showSettings, setShowSettings] = useState(false);
+
+  // Transfer mode: 'tcp' (fast) or 'http' (fallback)
+  const [transferMode, setTransferMode] = useState('http');
+
+  // Pre-warm connection and detect TCP availability on mount
+  useEffect(() => {
+    // Pre-warm the HTTP connection (avoids cold-start TCP handshake on first upload)
+    fetch(`http://${serverIP}:3001/ping`, { keepalive: true }).catch(() => {});
+
+    // Check if TCP transfer is available (requires react-native-tcp-socket + dev build)
+    if (isTCPAvailable()) {
+      setTransferMode('tcp');
+    }
+  }, [serverIP]);
 
   if (!cameraPermission || !micPermission) {
     return <View style={styles.container}><ActivityIndicator color="#fff" /></View>;
@@ -72,9 +87,30 @@ export default function CameraScreen({ serverIP, onReset }) {
     setUploadProgress(0);
     setUploadStatus('');
 
-    const result = await uploadVideo(serverIP, videoUri, (progress) => {
-      setUploadProgress(progress);
-    });
+    let result;
+    
+    if (transferMode === 'tcp') {
+      // Try TCP first (2-5x faster — no HTTP overhead)
+      setUploadStatus('⚡ TCP Transfer...');
+      result = await uploadVideoTCP(serverIP, videoUri, (progress) => {
+        setUploadProgress(progress);
+      });
+      
+      // If TCP failed, fall back to HTTP
+      if (!result.success && result.error?.includes('TCP')) {
+        setTransferMode('http');
+        setUploadProgress(0);
+        setUploadStatus('Falling back to HTTP...');
+        result = await uploadVideo(serverIP, videoUri, (progress) => {
+          setUploadProgress(progress);
+        });
+      }
+    } else {
+      // Standard HTTP upload
+      result = await uploadVideo(serverIP, videoUri, (progress) => {
+        setUploadProgress(progress);
+      });
+    }
 
     if (result.success) {
       setUploadStatus('Upload Complete!');
@@ -168,7 +204,12 @@ export default function CameraScreen({ serverIP, onReset }) {
       </Modal>
 
       <View style={styles.header}>
-        <Text style={styles.headerText}>Connected to: {serverIP}</Text>
+        <View>
+          <Text style={styles.headerText}>Connected to: {serverIP}</Text>
+          <Text style={[styles.modeText, transferMode === 'tcp' && styles.modeTextTCP]}>
+            {transferMode === 'tcp' ? '⚡ TCP Mode (Fast)' : '🌐 HTTP Mode'}
+          </Text>
+        </View>
         <View style={{flexDirection: 'row', gap: 16}}>
           <TouchableOpacity onPress={() => setShowSettings(true)}>
             <Text style={styles.settingsText}>Settings</Text>
@@ -415,5 +456,13 @@ const styles = StyleSheet.create({
   },
   optionTextSelected: {
     fontWeight: 'bold',
-  }
+  },
+  modeText: {
+    color: '#aaa',
+    fontSize: 11,
+    marginTop: 2,
+  },
+  modeTextTCP: {
+    color: '#30d158',
+  },
 });

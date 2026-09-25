@@ -15,7 +15,12 @@
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
-      }
+      },
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO"
+      ],
+      "package": "com.yasanth.mobileapp"
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -29,6 +34,11 @@
           "recordAudioAndroid": true
         }
       ]
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "4bb8392a-adf3-4f01-b681-138e5c7c2a0d"
+      }
+    }
   }
 }

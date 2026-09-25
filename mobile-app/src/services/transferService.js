@@ -14,15 +14,19 @@ export async function uploadVideo(serverIP, videoUri, onProgress) {
         httpMethod: 'POST',
         uploadType: 0, // FileSystemUploadType.BINARY_CONTENT = 0
         sessionType: 1, // FileSystemSessionType.FOREGROUND = 1 (removes OS network throttling)
+        headers: {
+          'Content-Type': 'application/octet-stream', // Skip content-type negotiation
+          'Connection': 'keep-alive',                  // Reuse TCP connection
+        },
       },
       (progress) => {
         const progressPercent = Math.round(
           (progress.totalBytesSent / progress.totalBytesExpectedToSend) * 100
         );
         
-        // Throttle progress updates to avoid flooding the React Native bridge
+        // Throttle progress updates to 300ms to reduce React Native bridge crossings
         const now = Date.now();
-        if (now - lastUpdate > 150 || progressPercent === 100) {
+        if (now - lastUpdate > 300 || progressPercent === 100) {
           lastUpdate = now;
           if (onProgress) onProgress(progressPercent);
         }
@@ -41,3 +45,4 @@ export async function uploadVideo(serverIP, videoUri, onProgress) {
     return { success: false, error: error.message };
   }
 }
+
