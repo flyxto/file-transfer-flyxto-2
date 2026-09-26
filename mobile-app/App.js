@@ -5,14 +5,25 @@ import SetupScreen from './src/screens/SetupScreen';
 
 export default function App() {
   const [serverIP, setServerIP] = useState('');
+  const [phoneId, setPhoneId] = useState('');
   
   if (!serverIP) {
-    return <SetupScreen onConnect={(ip) => setServerIP(ip)} />;
+    return <SetupScreen onConnect={(ip, id) => {
+      setServerIP(ip);
+      setPhoneId(id);
+    }} />;
   }
 
   return (
     <View style={styles.container}>
-      <CameraScreen serverIP={serverIP} onReset={() => setServerIP('')} />
+      <CameraScreen 
+        serverIP={serverIP} 
+        phoneId={phoneId}
+        onReset={() => {
+          setServerIP('');
+          setPhoneId('');
+        }} 
+      />
     </View>
   );
 }

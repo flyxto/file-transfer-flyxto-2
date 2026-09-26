@@ -9,7 +9,39 @@ const statusBadge = document.getElementById('status-badge');
 const filesBody = document.getElementById('files-body');
 const fileCount = document.getElementById('file-count');
 
+const btnMasterRecord = document.getElementById('btn-master-record');
+const btnMasterStop = document.getElementById('btn-master-stop');
+const phone1Status = document.getElementById('phone1-status');
+const phone2Status = document.getElementById('phone2-status');
+const syncSlider = document.getElementById('sync-slider');
+const syncValue = document.getElementById('sync-value');
+const processingSection = document.getElementById('processing-section');
+const activeProcess = document.getElementById('active-process');
+const progressTakeName = document.getElementById('progress-take-name');
+const progressPercentage = document.getElementById('progress-percentage');
+const progressBarFill = document.getElementById('progress-bar-fill');
+const pendingQueueContainer = document.getElementById('pending-queue-container');
+const pendingQueueList = document.getElementById('pending-queue-list');
+const processingEmptyState = document.getElementById('processing-empty-state');
+
 let receivedFiles = [];
+let isRecording = false;
+
+// Sync Slider Event
+syncSlider.addEventListener('input', (e) => {
+  const val = parseInt(e.target.value, 10);
+  syncValue.innerText = val > 0 ? `+${val}ms` : `${val}ms`;
+  
+  if (val > 0) {
+    syncValue.style.color = '#ff453a'; // red-ish for trimming phone 1
+  } else if (val < 0) {
+    syncValue.style.color = '#30d158'; // green-ish for trimming phone 2
+  } else {
+    syncValue.style.color = 'var(--text-primary)';
+  }
+  
+  window.api.setSyncOffset(val);
+});
 
 // Initialize
 async function init() {
@@ -20,11 +52,90 @@ async function init() {
     updateStatusUI(status);
   });
 
+  // Listen for phone connections
+  window.api.onPhonesStatus((status) => {
+    updatePhonesUI(status);
+  });
+
   // Listen for received files
   window.api.onFileReceived((fileData) => {
     addFileToList(fileData);
   });
+
+  function updateQueueVisibility() {
+    const hasActive = activeProcess.style.display === 'block';
+    const hasPending = pendingQueueList.children.length > 0;
+    if (hasActive || hasPending) {
+      processingEmptyState.style.display = 'none';
+    } else {
+      processingEmptyState.style.display = 'block';
+    }
+  }
+
+// Listen for queue updates
+  window.api.onQueueUpdated((queuedTakes) => {
+    if (queuedTakes.length > 0) {
+      pendingQueueContainer.style.display = 'block';
+      pendingQueueList.innerHTML = queuedTakes
+        .map(take => `<li>⏳ Take_${take} is waiting in queue</li>`)
+        .join('');
+    } else {
+      pendingQueueContainer.style.display = 'none';
+      pendingQueueList.innerHTML = '';
+    }
+    updateQueueVisibility();
+  });
+
+  // Listen for FFmpeg merge progress
+  window.api.onMergeProgress((data) => {
+    const { takeNumber, progress, status } = data;
+    
+    if (status === 'Complete' || status === 'Error') {
+      progressTakeName.innerText = `Take_${takeNumber}: ${status}`;
+      progressPercentage.innerText = '100%';
+      progressBarFill.style.width = '100%';
+      
+      setTimeout(() => {
+        activeProcess.style.display = 'none';
+        updateQueueVisibility();
+      }, 3000);
+    } else {
+      activeProcess.style.display = 'block';
+      progressTakeName.innerText = `Merging Take_${takeNumber}...`;
+      progressPercentage.innerText = `${progress}%`;
+      progressBarFill.style.width = `${progress}%`;
+      updateQueueVisibility();
+    }
+  });
 }
+
+function updatePhonesUI(status) {
+  const p1 = status.phone1;
+  const p2 = status.phone2;
+  
+  phone1Status.innerHTML = `<span class="dot ${p1 ? 'green' : 'red'}"></span> Phone 1`;
+  phone2Status.innerHTML = `<span class="dot ${p2 ? 'green' : 'red'}"></span> Phone 2`;
+  
+  // Enable record button if at least one phone is connected and we are not already recording
+  if (!isRecording) {
+    btnMasterRecord.disabled = !(p1 || p2);
+  }
+}
+
+// Master Controls
+btnMasterRecord.addEventListener('click', () => {
+  isRecording = true;
+  btnMasterRecord.classList.add('hidden');
+  btnMasterStop.classList.remove('hidden');
+  window.api.startRecording();
+});
+
+btnMasterStop.addEventListener('click', () => {
+  isRecording = false;
+  btnMasterStop.classList.add('hidden');
+  btnMasterRecord.classList.remove('hidden');
+  window.api.stopRecording();
+});
 
 function updateStatusUI(status) {
   ipDisplay.innerText = status.ip;
@@ -75,11 +186,26 @@ function addFileToList(file) {
     <td>${file.filename}</td>
     <td>${formatBytes(file.size)}</td>
     <td>${dateObj.toLocaleTimeString()}</td>
-    <td>
-      <button class="btn secondary small" onclick="openFile('${file.path.replace(/\\/g, '\\\\')}')">Open</button>
-      <button class="btn secondary small" onclick="openFolder('${file.path.replace(/\\/g, '\\\\')}')">Folder</button>
-    </td>
   `;
+  
+  const tdActions = document.createElement('td');
+  tdActions.style.display = 'flex';
+  tdActions.style.gap = '8px';
+  
+  const btnOpen = document.createElement('button');
+  btnOpen.className = 'btn secondary small';
+  btnOpen.innerText = 'Open';
+  btnOpen.addEventListener('click', () => window.api.openPath(file.path));
+  
+  const btnFolder = document.createElement('button');
+  btnFolder.className = 'btn secondary small';
+  btnFolder.innerText = 'Folder';
+  btnFolder.addEventListener('click', () => window.api.showItemInFolder(file.path));
+  
+  tdActions.appendChild(btnOpen);
+  tdActions.appendChild(btnFolder);
+  
+  tr.appendChild(tdActions);
   
   filesBody.insertBefore(tr, filesBody.firstChild);
 }
@@ -89,21 +215,12 @@ btnStart.addEventListener('click', () => window.api.startServer());
 btnStop.addEventListener('click', () => window.api.stopServer());
 
 btnChangeFolder.addEventListener('click', async () => {
-  // We'll need a mechanism to update the multer storage path dynamically, 
-  // but for now we'll just allow picking. (Needs main process restart to apply in real app, or dynamic multer)
   const newPath = await window.api.selectDirectory();
   if (newPath) {
-    alert('Note: Requires app restart to take effect in this simple implementation.');
+    // Dynamically update the UI
+    const updatedStatus = await window.api.getServerStatus();
+    updateStatusUI(updatedStatus);
   }
 });
-
-// Global functions for inline onclick handlers
-window.openFile = (path) => {
-  window.api.openPath(path);
-};
-
-window.openFolder = (path) => {
-  window.api.showItemInFolder(path);
-};
 
 init();

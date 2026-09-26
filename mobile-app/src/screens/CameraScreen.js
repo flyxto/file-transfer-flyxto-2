@@ -1,47 +1,72 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, Modal, ScrollView, Linking } from 'react-native';
+import { View, Text, StyleSheet, ActivityIndicator, Linking, TouchableOpacity } from 'react-native';
 import { CameraView, useCameraPermissions, useMicrophonePermissions } from 'expo-camera';
+import * as ScreenOrientation from 'expo-screen-orientation';
+import io from 'socket.io-client';
 import { uploadVideo } from '../services/transferService';
-import { isTCPAvailable, uploadVideoTCP } from '../services/tcpTransferService';
 
-export default function CameraScreen({ serverIP, onReset }) {
+export default function CameraScreen({ serverIP, phoneId, onReset }) {
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const [micPermission, requestMicPermission] = useMicrophonePermissions();
-  const [permissionsRequested, setPermissionsRequested] = useState(false);
-  
   const cameraRef = useRef(null);
   
   const [isRecording, setIsRecording] = useState(false);
-  const [videoUri, setVideoUri] = useState(null);
-  const [facing, setFacing] = useState('back');
-  
-  const [uploading, setUploading] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadStatus, setUploadStatus] = useState('');
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [connected, setConnected] = useState(false);
 
-  // Camera settings state
-  const [videoQuality, setVideoQuality] = useState('2160p');
-  const [stabilization, setStabilization] = useState('cinematic');
-  const [autofocus, setAutofocus] = useState('on');
-  const [showSettings, setShowSettings] = useState(false);
-
-  // Transfer mode: 'tcp' (fast) or 'http' (fallback)
-  const [transferMode, setTransferMode] = useState('http');
-
-  // Pre-warm connection and detect TCP availability on mount
+  // Lock orientation to Landscape
   useEffect(() => {
-    // Pre-warm the HTTP connection (avoids cold-start TCP handshake on first upload)
-    fetch(`http://${serverIP}:3001/ping`, { keepalive: true }).catch(() => {});
-
-    // Check if TCP transfer is available (requires react-native-tcp-socket + dev build)
-    if (isTCPAvailable()) {
-      setTransferMode('tcp');
+    async function lockOrientation() {
+      await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE_RIGHT);
     }
-  }, [serverIP]);
+    lockOrientation();
 
-  // Request permissions sequentially to avoid re-render loop
+    // Cleanup when leaving
+    return () => {
+      ScreenOrientation.unlockAsync();
+    };
+  }, []);
+
+  // Socket.io Connection & Remote Control
+  useEffect(() => {
+    const socket = io(`http://${serverIP}:3001`);
+
+    socket.on('connect', () => {
+      setConnected(true);
+      socket.emit('register', { phoneId });
+    });
+
+    socket.on('disconnect', () => {
+      setConnected(false);
+    });
+
+    socket.on('start_record', (data) => {
+      if (cameraRef.current) {
+        setIsRecording(true);
+        setUploadStatus('');
+        cameraRef.current.recordAsync().then((video) => {
+          handleAutoUpload(video.uri, data ? data.session : 'unknown');
+        }).catch(err => {
+          console.error("Recording error:", err);
+          setIsRecording(false);
+        });
+      }
+    });
+
+    socket.on('stop_record', () => {
+      if (cameraRef.current) {
+        cameraRef.current.stopRecording();
+        setIsRecording(false);
+      }
+    });
+
+    return () => {
+      socket.disconnect();
+    };
+  }, [serverIP, phoneId]);
+
   const handleRequestPermissions = async () => {
-    setPermissionsRequested(true);
     try {
       const camResult = await requestCameraPermission();
       if (camResult.granted) {
@@ -52,28 +77,38 @@ export default function CameraScreen({ serverIP, onReset }) {
     }
   };
 
+  const handleAutoUpload = async (videoUri, sessionId) => {
+    setUploadStatus('Uploading...');
+    setUploadProgress(0);
+
+    const result = await uploadVideo(serverIP, videoUri, (progress) => {
+      setUploadProgress(progress);
+    }, phoneId, sessionId);
+
+    if (result.success) {
+      setUploadStatus('Upload Complete!');
+      setTimeout(() => setUploadStatus(''), 3000);
+    } else {
+      setUploadStatus(`Error: ${result.error}`);
+    }
+  };
+
   if (!cameraPermission || !micPermission) {
     return <View style={styles.container}><ActivityIndicator color="#fff" /></View>;
   }
 
   if (!cameraPermission.granted || !micPermission.granted) {
-    // Check if the user has permanently denied permissions (can't ask again)
-    const cameraDeniedPermanently = cameraPermission.status === 'denied' && cameraPermission.canAskAgain === false;
-    const micDeniedPermanently = micPermission.status === 'denied' && micPermission.canAskAgain === false;
-    const needsSettings = cameraDeniedPermanently || micDeniedPermanently;
+    const cameraDenied = cameraPermission.status === 'denied' && !cameraPermission.canAskAgain;
+    const micDenied = micPermission.status === 'denied' && !micPermission.canAskAgain;
+    const needsSettings = cameraDenied || micDenied;
 
     return (
       <View style={styles.container}>
-        <Text style={styles.text}>We need your permission to show the camera and use the microphone</Text>
+        <Text style={styles.text}>We need permission to use the Camera and Microphone.</Text>
         {needsSettings ? (
-          <>
-            <Text style={[styles.text, { color: '#ff9500', fontSize: 13, marginTop: 0 }]}>
-              Permissions were denied. Please enable Camera and Microphone in your device Settings.
-            </Text>
-            <TouchableOpacity style={styles.actionBtn} onPress={() => Linking.openSettings()}>
-              <Text style={styles.actionBtnText}>Open Settings</Text>
-            </TouchableOpacity>
-          </>
+          <TouchableOpacity style={styles.actionBtn} onPress={() => Linking.openSettings()}>
+            <Text style={styles.actionBtnText}>Open Settings</Text>
+          </TouchableOpacity>
         ) : (
           <TouchableOpacity style={styles.actionBtn} onPress={handleRequestPermissions}>
             <Text style={styles.actionBtnText}>Grant Permissions</Text>
@@ -83,194 +118,47 @@ export default function CameraScreen({ serverIP, onReset }) {
     );
   }
 
-  const toggleCameraFacing = () => {
-    setFacing(current => (current === 'back' ? 'front' : 'back'));
-  };
-
-  const startRecording = async () => {
-    if (cameraRef.current) {
-      setIsRecording(true);
-      try {
-        const video = await cameraRef.current.recordAsync();
-        setVideoUri(video.uri);
-      } catch (error) {
-        console.error("Failed to record:", error);
-      } finally {
-        setIsRecording(false);
-      }
-    }
-  };
-
-  const stopRecording = () => {
-    if (cameraRef.current && isRecording) {
-      cameraRef.current.stopRecording();
-    }
-  };
-
-  const handleSend = async () => {
-    if (!videoUri) return;
-    
-    setUploading(true);
-    setUploadProgress(0);
-    setUploadStatus('');
-
-    let result;
-    
-    if (transferMode === 'tcp') {
-      // Try TCP first (2-5x faster — no HTTP overhead)
-      setUploadStatus('⚡ TCP Transfer...');
-      result = await uploadVideoTCP(serverIP, videoUri, (progress) => {
-        setUploadProgress(progress);
-      });
-      
-      // If TCP failed, fall back to HTTP
-      if (!result.success) {
-        setTransferMode('http');
-        setUploadProgress(0);
-        setUploadStatus('Falling back to HTTP...');
-        result = await uploadVideo(serverIP, videoUri, (progress) => {
-          setUploadProgress(progress);
-        });
-      }
-    } else {
-      // Standard HTTP upload
-      result = await uploadVideo(serverIP, videoUri, (progress) => {
-        setUploadProgress(progress);
-      });
-    }
-
-    if (result.success) {
-      setUploadStatus('Upload Complete!');
-      setTimeout(() => {
-        setVideoUri(null);
-        setUploadStatus('');
-      }, 2000);
-    } else {
-      setUploadStatus(`Error: ${result.error}`);
-    }
-    
-    setUploading(false);
-  };
-
-  // Preview / Send screen after recording
-  if (videoUri) {
-    return (
-      <View style={styles.container}>
-        <View style={styles.previewContainer}>
-          <Text style={styles.previewTitle}>Video Recorded!</Text>
-          <Text style={styles.previewSubtitle}>Ready to send to {serverIP}</Text>
-          
-          {uploading ? (
-            <View style={styles.progressContainer}>
-              <Text style={styles.progressText}>{uploadProgress}%</Text>
-              <View style={styles.progressBarBg}>
-                <View style={[styles.progressBarFill, { width: `${uploadProgress}%` }]} />
-              </View>
-              <Text style={styles.statusText}>Uploading...</Text>
-            </View>
-          ) : (
-            <View style={styles.actionRow}>
-              <TouchableOpacity style={[styles.actionBtn, styles.cancelBtn]} onPress={() => setVideoUri(null)}>
-                <Text style={styles.actionBtnText}>Discard</Text>
-              </TouchableOpacity>
-              
-              <TouchableOpacity style={[styles.actionBtn, styles.sendBtn]} onPress={handleSend}>
-                <Text style={styles.actionBtnText}>Send to Desktop</Text>
-              </TouchableOpacity>
-            </View>
-          )}
-          
-          {uploadStatus ? <Text style={styles.statusTextResult}>{uploadStatus}</Text> : null}
-        </View>
-      </View>
-    );
-  }
-
-  // Camera recording screen
   return (
     <View style={styles.container}>
-      <Modal visible={showSettings} animationType="slide" transparent={true}>
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Camera Settings</Text>
-              <TouchableOpacity onPress={() => setShowSettings(false)}>
-                <Text style={styles.closeText}>Close</Text>
-              </TouchableOpacity>
-            </View>
-            <ScrollView>
-              <Text style={styles.settingLabel}>Video Quality</Text>
-              <View style={styles.buttonRow}>
-                {['2160p', '1080p', '720p', '480p'].map(q => (
-                  <TouchableOpacity key={q} style={[styles.optionBtn, videoQuality === q && styles.optionBtnSelected]} onPress={() => setVideoQuality(q)}>
-                    <Text style={[styles.optionText, videoQuality === q && styles.optionTextSelected]}>{q}</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-
-              <Text style={styles.settingLabel}>Stabilization</Text>
-              <View style={styles.buttonRow}>
-                {['off', 'standard', 'cinematic', 'auto'].map(s => (
-                  <TouchableOpacity key={s} style={[styles.optionBtn, stabilization === s && styles.optionBtnSelected]} onPress={() => setStabilization(s)}>
-                    <Text style={[styles.optionText, stabilization === s && styles.optionTextSelected]}>{s}</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-
-              <Text style={styles.settingLabel}>Autofocus</Text>
-              <View style={styles.buttonRow}>
-                {['on', 'off'].map(a => (
-                  <TouchableOpacity key={a} style={[styles.optionBtn, autofocus === a && styles.optionBtnSelected]} onPress={() => setAutofocus(a)}>
-                    <Text style={[styles.optionText, autofocus === a && styles.optionTextSelected]}>{a}</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
-
-      <View style={styles.header}>
-        <View>
-          <Text style={styles.headerText}>Connected to: {serverIP}</Text>
-          <Text style={[styles.modeText, styles.modeTextTCP]}>
-            ⚡ Ultra-Fast Stream (Native)
-          </Text>
-        </View>
-        <View style={{flexDirection: 'row', gap: 16}}>
-          <TouchableOpacity onPress={() => setShowSettings(true)}>
-            <Text style={styles.settingsText}>Settings</Text>
-          </TouchableOpacity>
-          <TouchableOpacity onPress={onReset}>
-            <Text style={styles.disconnectText}>Disconnect</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-
       <CameraView 
         ref={cameraRef} 
         style={styles.camera} 
-        facing={facing} 
+        facing="back"
         mode="video"
-        videoQuality={videoQuality}
-        videoStabilizationMode={stabilization}
-        autofocus={autofocus}
+        videoQuality="1080p"
+        videoStabilizationMode="standard"
+        mute={true}
       />
-      <View style={styles.controlsContainer}>
-        <TouchableOpacity style={styles.flipBtn} onPress={toggleCameraFacing} disabled={isRecording}>
-          <Text style={styles.flipText}>Flip</Text>
-        </TouchableOpacity>
-
-        <View style={styles.recordBtnContainer}>
-          <TouchableOpacity 
-            style={[styles.recordBtn, isRecording && styles.recordingActive]} 
-            onPress={isRecording ? stopRecording : startRecording}
-          >
-            <View style={[styles.recordBtnInner, isRecording && styles.recordBtnInnerActive]} />
+      
+      {/* Overlay Status */}
+      <View style={styles.overlay}>
+        <View style={styles.topBar}>
+          <View style={styles.statusBox}>
+            <View style={[styles.dot, connected ? styles.dotGreen : styles.dotRed]} />
+            <Text style={styles.statusText}>Phone {phoneId} - {connected ? 'Connected' : 'Disconnected'}</Text>
+          </View>
+          <TouchableOpacity style={styles.disconnectBtn} onPress={onReset}>
+            <Text style={styles.disconnectText}>Leave Studio</Text>
           </TouchableOpacity>
         </View>
-        
-        <View style={{ width: 60 }} />
+
+        {isRecording && (
+          <View style={styles.recordingIndicator}>
+            <View style={styles.recDot} />
+            <Text style={styles.recText}>REC</Text>
+          </View>
+        )}
+
+        {uploadStatus ? (
+          <View style={styles.uploadOverlay}>
+            <Text style={styles.uploadText}>{uploadStatus}</Text>
+            {uploadStatus === 'Uploading...' && (
+              <View style={styles.progressBarBg}>
+                <View style={[styles.progressBarFill, { width: `${uploadProgress}%` }]} />
+              </View>
+            )}
+          </View>
+        ) : null}
       </View>
     </View>
   );
@@ -285,211 +173,111 @@ const styles = StyleSheet.create({
   camera: {
     flex: 1,
   },
-  header: {
-    flexDirection: 'row',
+  overlay: {
+    ...StyleSheet.absoluteFillObject,
     justifyContent: 'space-between',
-    padding: 16,
-    paddingTop: 50,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    position: 'absolute',
-    top: 0,
-    width: '100%',
+    padding: 20,
     zIndex: 10,
   },
-  headerText: {
-    color: '#0f0',
+  topBar: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 20, // For notch
+  },
+  statusBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    paddingHorizontal: 15,
+    paddingVertical: 10,
+    borderRadius: 20,
+  },
+  dot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    marginRight: 8,
+  },
+  dotGreen: { backgroundColor: '#30d158' },
+  dotRed: { backgroundColor: '#ff453a' },
+  statusText: {
+    color: '#fff',
     fontWeight: 'bold',
   },
-  settingsText: {
-    color: '#0a84ff',
-    fontWeight: '600',
+  disconnectBtn: {
+    backgroundColor: 'rgba(255, 69, 58, 0.8)',
+    paddingHorizontal: 15,
+    paddingVertical: 10,
+    borderRadius: 15,
   },
   disconnectText: {
-    color: '#ff453a',
-    fontWeight: '600',
-  },
-  controlsContainer: {
-    position: 'absolute',
-    bottom: 40,
-    width: '100%',
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    alignItems: 'center',
-  },
-  flipBtn: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  flipText: {
     color: '#fff',
-    fontWeight: '600',
+    fontWeight: 'bold',
   },
-  recordBtnContainer: {
+  recordingIndicator: {
+    position: 'absolute',
+    top: 30,
+    left: '50%',
+    transform: [{ translateX: -40 }],
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    paddingHorizontal: 15,
+    paddingVertical: 8,
+    borderRadius: 20,
   },
-  recordBtn: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    borderWidth: 4,
-    borderColor: '#fff',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  recordingActive: {
-    borderColor: 'transparent',
-  },
-  recordBtnInner: {
-    width: 66,
-    height: 66,
-    borderRadius: 33,
+  recDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
     backgroundColor: '#ff453a',
+    marginRight: 8,
   },
-  recordBtnInnerActive: {
-    borderRadius: 8,
-    width: 40,
-    height: 40,
+  recText: {
+    color: '#ff453a',
+    fontWeight: 'bold',
+    fontSize: 16,
+  },
+  uploadOverlay: {
+    backgroundColor: 'rgba(0,0,0,0.8)',
+    padding: 20,
+    borderRadius: 16,
+    alignItems: 'center',
+    alignSelf: 'center',
+    width: '60%',
+    marginBottom: 20,
+  },
+  uploadText: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginBottom: 10,
+  },
+  progressBarBg: {
+    width: '100%',
+    height: 8,
+    backgroundColor: '#333',
+    borderRadius: 4,
+    overflow: 'hidden',
+  },
+  progressBarFill: {
+    height: '100%',
+    backgroundColor: '#0a84ff',
   },
   text: {
     color: '#fff',
     textAlign: 'center',
     margin: 20,
   },
-  previewContainer: {
-    padding: 20,
-    alignItems: 'center',
-  },
-  previewTitle: {
-    fontSize: 28,
-    color: '#fff',
-    fontWeight: 'bold',
-    marginBottom: 8,
-  },
-  previewSubtitle: {
-    fontSize: 16,
-    color: '#aaa',
-    marginBottom: 40,
-  },
-  actionRow: {
-    flexDirection: 'row',
-    gap: 16,
-  },
   actionBtn: {
+    backgroundColor: '#0a84ff',
     padding: 16,
     borderRadius: 8,
-    backgroundColor: '#333',
-    minWidth: 120,
-    alignItems: 'center',
-  },
-  sendBtn: {
-    backgroundColor: '#0a84ff',
-  },
-  cancelBtn: {
-    backgroundColor: '#ff453a',
+    alignSelf: 'center',
   },
   actionBtnText: {
     color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  progressContainer: {
-    width: '100%',
-    alignItems: 'center',
-  },
-  progressText: {
-    color: '#fff',
-    fontSize: 32,
     fontWeight: 'bold',
-    marginBottom: 10,
-  },
-  progressBarBg: {
-    width: '100%',
-    height: 12,
-    backgroundColor: '#333',
-    borderRadius: 6,
-    overflow: 'hidden',
-    marginBottom: 10,
-  },
-  progressBarFill: {
-    height: '100%',
-    backgroundColor: '#0a84ff',
-  },
-  statusText: {
-    color: '#aaa',
-  },
-  statusTextResult: {
-    color: '#fff',
-    marginTop: 20,
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    justifyContent: 'flex-end',
-  },
-  modalContent: {
-    backgroundColor: '#1c1c1e',
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
-    padding: 20,
-    maxHeight: '80%',
-    paddingBottom: 40,
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 20,
-  },
-  modalTitle: {
-    color: '#fff',
-    fontSize: 20,
-    fontWeight: 'bold',
-  },
-  closeText: {
-    color: '#0a84ff',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  settingLabel: {
-    color: '#aaa',
-    fontSize: 14,
-    marginTop: 15,
-    marginBottom: 8,
-    textTransform: 'uppercase',
-  },
-  buttonRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-  },
-  optionBtn: {
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    borderRadius: 8,
-    backgroundColor: '#2c2c2e',
-  },
-  optionBtnSelected: {
-    backgroundColor: '#0a84ff',
-  },
-  optionText: {
-    color: '#fff',
-  },
-  optionTextSelected: {
-    fontWeight: 'bold',
-  },
-  modeText: {
-    color: '#aaa',
-    fontSize: 11,
-    marginTop: 2,
-  },
-  modeTextTCP: {
-    color: '#30d158',
   },
 });

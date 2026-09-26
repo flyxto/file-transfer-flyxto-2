@@ -26,6 +26,13 @@ const TCP_PORT = 3002;
 
 let saveDirectory = path.join(app.getPath('userData'), 'received-videos');
 
+function setSaveDirectory(newPath) {
+  saveDirectory = newPath;
+  if (!fs.existsSync(saveDirectory)) {
+    fs.mkdirSync(saveDirectory, { recursive: true });
+  }
+}
+
 function startTCPServer(mainWindow) {
   if (tcpServer) return;
 
@@ -214,4 +221,5 @@ module.exports = {
   startTCPServer,
   stopTCPServer,
   getTCPServerStatus,
+  setSaveDirectory,
 };
