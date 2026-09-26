@@ -16,6 +16,7 @@
  */
 
 import * as FileSystem from 'expo-file-system/legacy';
+import { Buffer } from 'buffer';
 
 const TCP_PORT = 3002;
 
@@ -23,12 +24,7 @@ const TCP_PORT = 3002;
  * Check if TCP transfer is available (react-native-tcp-socket installed)
  */
 export function isTCPAvailable() {
-  try {
-    require('react-native-tcp-socket');
-    return true;
-  } catch (e) {
-    return false;
-  }
+  return false; // Force HTTP fallback (LocalSend method)
 }
 
 /**
@@ -58,97 +54,125 @@ export async function uploadVideoTCP(serverIP, videoUri, onProgress) {
     const fileSize = fileInfo.size;
     const filename = `video_${Date.now()}.mp4`;
 
-    // Build the protocol header
-    const headerObj = JSON.stringify({ filename, fileSize });
-    const headerBuf = Buffer.from(headerObj, 'utf8');
+    // Build the protocol header as base64 strings for react-native-tcp-socket
+    // (passing Buffer objects from the polyfill to write() silently fails)
+    const headerJson = JSON.stringify({ filename, fileSize });
+    const headerBytes = Buffer.from(headerJson, 'utf8');
     const headerLenBuf = Buffer.alloc(4);
-    headerLenBuf.writeUInt32BE(headerBuf.length, 0);
+    headerLenBuf.writeUInt32BE(headerBytes.length, 0);
+
+    // Convert to base64 strings — react-native-tcp-socket's write(string, 'base64') works reliably
+    const headerLenBase64 = headerLenBuf.toString('base64');
+    const headerBase64 = headerBytes.toString('base64');
 
     return new Promise((resolve) => {
+      let settled = false;
+      const finish = (result) => {
+        if (!settled) {
+          settled = true;
+          resolve(result);
+        }
+      };
+
+      // 30-second timeout for the entire transfer
+      const timeout = setTimeout(() => {
+        console.error('TCP: Transfer timeout (30s)');
+        try { client.destroy(); } catch (e) {}
+        finish({ success: false, error: 'TCP transfer timed out after 30s' });
+      }, 30000);
+
       const client = TcpSocket.createConnection(
         { port: TCP_PORT, host: serverIP },
-        async () => {
-          // Connection established — send header
-          client.write(headerLenBuf);
-          client.write(headerBuf);
+        () => {
+          // Connection established — send header using base64 string writes
+          client.write(headerLenBase64, 'base64', () => {
+            client.write(headerBase64, 'base64', () => {
+              // Header sent — now stream file data in chunks
+              const CHUNK_SIZE = 256 * 1024; // 256KB chunks
+              let offset = 0;
 
-          // Read file as base64 and send in chunks to avoid memory pressure
-          // Note: For very large files (>1GB), consider react-native-blob-util for streaming
-          const CHUNK_SIZE = 512 * 1024; // 512KB chunks
-          let offset = 0;
+              const sendNextChunk = async () => {
+                try {
+                  const length = Math.min(CHUNK_SIZE, fileSize - offset);
+                  if (length <= 0) {
+                    // All data sent — signal end
+                    client.end();
+                    return;
+                  }
 
-          const sendNextChunk = async () => {
-            try {
-              const length = Math.min(CHUNK_SIZE, fileSize - offset);
-              if (length <= 0) {
-                // All data sent — signal end
-                client.end();
-                return;
-              }
+                  // Read chunk as base64 from disk
+                  const base64Chunk = await FileSystem.readAsStringAsync(videoUri, {
+                    encoding: FileSystem.EncodingType.Base64,
+                    position: offset,
+                    length: length,
+                  });
 
-              // Read chunk as base64
-              const base64Chunk = await FileSystem.readAsStringAsync(videoUri, {
-                encoding: FileSystem.EncodingType.Base64,
-                position: offset,
-                length: length,
-              });
+                  // Write base64 string directly — react-native-tcp-socket decodes it natively
+                  client.write(base64Chunk, 'base64', () => {
+                    // Advance offset by the actual byte count (not base64 string length)
+                    offset += length;
 
-              // Convert base64 to buffer and send
-              const chunkBuf = Buffer.from(base64Chunk, 'base64');
-              client.write(chunkBuf);
+                    // Report progress
+                    const progress = Math.round((offset / fileSize) * 100);
+                    if (onProgress) onProgress(Math.min(progress, 100));
 
-              offset += chunkBuf.length;
+                    // Send next chunk (yield to JS thread first)
+                    setTimeout(sendNextChunk, 0);
+                  });
+                } catch (err) {
+                  console.error('TCP: Chunk send error:', err);
+                  client.destroy();
+                  clearTimeout(timeout);
+                  finish({ success: false, error: err.message });
+                }
+              };
 
-              // Report progress
-              const progress = Math.round((offset / fileSize) * 100);
-              if (onProgress) onProgress(Math.min(progress, 100));
-
-              // Send next chunk (use setImmediate to avoid blocking the JS thread)
-              setImmediate(sendNextChunk);
-            } catch (err) {
-              console.error('TCP: Chunk send error:', err);
-              client.destroy();
-              resolve({ success: false, error: err.message });
-            }
-          };
-
-          // Start sending file data
-          sendNextChunk();
+              // Start streaming
+              sendNextChunk();
+            });
+          });
         }
       );
 
-      let responseData = Buffer.alloc(0);
+      let responseChunks = [];
 
       client.on('data', (data) => {
         // Server sends back a response after transfer completes
-        responseData = Buffer.concat([responseData, data]);
+        responseChunks.push(data);
       });
 
       client.on('end', () => {
+        clearTimeout(timeout);
         try {
+          // Reassemble response
+          const responseData = Buffer.concat(
+            responseChunks.map(chunk =>
+              typeof chunk === 'string' ? Buffer.from(chunk, 'utf8') : Buffer.from(chunk)
+            )
+          );
+
           // Parse server response (4-byte length prefix + JSON)
           if (responseData.length >= 4) {
             const respLen = responseData.readUInt32BE(0);
             const respJson = responseData.slice(4, 4 + respLen).toString('utf8');
             const resp = JSON.parse(respJson);
-            resolve({ success: resp.success, data: resp });
+            finish({ success: resp.success, data: resp });
           } else {
-            resolve({ success: true, data: { message: 'Transfer complete' } });
+            finish({ success: true, data: { message: 'Transfer complete' } });
           }
         } catch (e) {
-          resolve({ success: true, data: { message: 'Transfer complete (no response parsed)' } });
+          finish({ success: true, data: { message: 'Transfer complete (no response parsed)' } });
         }
       });
 
       client.on('error', (err) => {
         console.error('TCP: Connection error:', err);
-        resolve({ success: false, error: `TCP connection failed: ${err.message}` });
+        clearTimeout(timeout);
+        finish({ success: false, error: `TCP connection failed: ${err.message}` });
       });
 
-      client.on('timeout', () => {
-        console.error('TCP: Connection timeout');
-        client.destroy();
-        resolve({ success: false, error: 'TCP connection timed out' });
+      client.on('close', () => {
+        clearTimeout(timeout);
       });
     });
   } catch (error) {
@@ -156,3 +180,4 @@ export async function uploadVideoTCP(serverIP, videoUri, onProgress) {
     return { success: false, error: error.message };
   }
 }
+

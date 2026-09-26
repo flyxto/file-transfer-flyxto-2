@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, Modal, ScrollView } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, Modal, ScrollView, Linking } from 'react-native';
 import { CameraView, useCameraPermissions, useMicrophonePermissions } from 'expo-camera';
 import { uploadVideo } from '../services/transferService';
 import { isTCPAvailable, uploadVideoTCP } from '../services/tcpTransferService';
@@ -7,6 +7,7 @@ import { isTCPAvailable, uploadVideoTCP } from '../services/tcpTransferService';
 export default function CameraScreen({ serverIP, onReset }) {
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const [micPermission, requestMicPermission] = useMicrophonePermissions();
+  const [permissionsRequested, setPermissionsRequested] = useState(false);
   
   const cameraRef = useRef(null);
   
@@ -38,20 +39,46 @@ export default function CameraScreen({ serverIP, onReset }) {
     }
   }, [serverIP]);
 
+  // Request permissions sequentially to avoid re-render loop
+  const handleRequestPermissions = async () => {
+    setPermissionsRequested(true);
+    try {
+      const camResult = await requestCameraPermission();
+      if (camResult.granted) {
+        await requestMicPermission();
+      }
+    } catch (e) {
+      console.error('Permission request error:', e);
+    }
+  };
+
   if (!cameraPermission || !micPermission) {
     return <View style={styles.container}><ActivityIndicator color="#fff" /></View>;
   }
 
   if (!cameraPermission.granted || !micPermission.granted) {
+    // Check if the user has permanently denied permissions (can't ask again)
+    const cameraDeniedPermanently = cameraPermission.status === 'denied' && cameraPermission.canAskAgain === false;
+    const micDeniedPermanently = micPermission.status === 'denied' && micPermission.canAskAgain === false;
+    const needsSettings = cameraDeniedPermanently || micDeniedPermanently;
+
     return (
       <View style={styles.container}>
         <Text style={styles.text}>We need your permission to show the camera and use the microphone</Text>
-        <TouchableOpacity style={styles.actionBtn} onPress={async () => {
-          await requestCameraPermission();
-          await requestMicPermission();
-        }}>
-          <Text style={styles.actionBtnText}>Grant Permissions</Text>
-        </TouchableOpacity>
+        {needsSettings ? (
+          <>
+            <Text style={[styles.text, { color: '#ff9500', fontSize: 13, marginTop: 0 }]}>
+              Permissions were denied. Please enable Camera and Microphone in your device Settings.
+            </Text>
+            <TouchableOpacity style={styles.actionBtn} onPress={() => Linking.openSettings()}>
+              <Text style={styles.actionBtnText}>Open Settings</Text>
+            </TouchableOpacity>
+          </>
+        ) : (
+          <TouchableOpacity style={styles.actionBtn} onPress={handleRequestPermissions}>
+            <Text style={styles.actionBtnText}>Grant Permissions</Text>
+          </TouchableOpacity>
+        )}
       </View>
     );
   }
@@ -97,7 +124,7 @@ export default function CameraScreen({ serverIP, onReset }) {
       });
       
       // If TCP failed, fall back to HTTP
-      if (!result.success && result.error?.includes('TCP')) {
+      if (!result.success) {
         setTransferMode('http');
         setUploadProgress(0);
         setUploadStatus('Falling back to HTTP...');
@@ -206,8 +233,8 @@ export default function CameraScreen({ serverIP, onReset }) {
       <View style={styles.header}>
         <View>
           <Text style={styles.headerText}>Connected to: {serverIP}</Text>
-          <Text style={[styles.modeText, transferMode === 'tcp' && styles.modeTextTCP]}>
-            {transferMode === 'tcp' ? '⚡ TCP Mode (Fast)' : '🌐 HTTP Mode'}
+          <Text style={[styles.modeText, styles.modeTextTCP]}>
+            ⚡ Ultra-Fast Stream (Native)
           </Text>
         </View>
         <View style={{flexDirection: 'row', gap: 16}}>

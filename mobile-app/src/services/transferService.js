@@ -3,7 +3,8 @@ import * as FileSystem from 'expo-file-system/legacy';
 
 
 export async function uploadVideo(serverIP, videoUri, onProgress) {
-  const uploadUrl = `http://${serverIP}:3001/upload`;
+  const uploadUrl = `http://${serverIP}:3001/upload/stream`;
+  const filename = videoUri.split('/').pop() || `video_${Date.now()}.mp4`;
 
   try {
     let lastUpdate = 0;
@@ -12,11 +13,12 @@ export async function uploadVideo(serverIP, videoUri, onProgress) {
       videoUri,
       {
         httpMethod: 'POST',
-        uploadType: 0, // FileSystemUploadType.BINARY_CONTENT = 0
+        uploadType: 0, // FileSystemUploadType.BINARY_CONTENT = 0 (Raw Byte Stream)
         sessionType: 1, // FileSystemSessionType.FOREGROUND = 1 (removes OS network throttling)
         headers: {
-          'Content-Type': 'application/octet-stream', // Skip content-type negotiation
-          'Connection': 'keep-alive',                  // Reuse TCP connection
+          'Content-Type': 'application/octet-stream', // Bypasses multipart parsing overhead
+          'Connection': 'keep-alive',                 // Reuse TCP connection
+          'x-filename': filename,                     // Pass filename to server
         },
       },
       (progress) => {

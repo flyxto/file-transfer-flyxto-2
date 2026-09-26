@@ -39,26 +39,37 @@ function startServer(mainWindow) {
     res.json({ status: 'ok', serverName: os.hostname(), timestamp: Date.now() });
   });
 
-  expressApp.post('/upload', (req, res) => {
-    const timestamp = Date.now();
-    const filename = `video_${timestamp}.mp4`;
+  const storage = multer.diskStorage({
+    destination: function (req, file, cb) {
+      cb(null, saveDirectory)
+    },
+    filename: function (req, file, cb) {
+      const timestamp = Date.now();
+      cb(null, `video_${timestamp}.mp4`)
+    }
+  });
+  const upload = multer({ storage: storage });
+
+  // High-speed raw binary stream route (bypasses multipart parsing overhead entirely)
+  expressApp.post('/upload/stream', (req, res) => {
+    const filename = req.headers['x-filename'] || `video_${Date.now()}.mp4`;
     const filePath = path.join(saveDirectory, filename);
     
-    console.log(`Receiving raw file stream to: ${filePath}`);
-    // 1MB write buffer (vs default 16KB) — 64x fewer syscalls for large files
+    console.log(`⚡ Receiving high-speed raw stream: ${filePath}`);
+    
+    // 2MB write buffer — maximizes disk throughput and minimizes OS syscalls
     const writeStream = fs.createWriteStream(filePath, {
-      highWaterMark: 1024 * 1024
+      highWaterMark: 2 * 1024 * 1024
     });
     
     req.pipe(writeStream);
 
     req.on('end', () => {
-      console.log('File received entirely:', filePath);
+      console.log('File stream complete:', filePath);
       
       let size = 0;
       try { size = fs.statSync(filePath).size; } catch(e) {}
 
-      // Notify frontend
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('file-received', {
           filename: filename,
@@ -68,13 +79,38 @@ function startServer(mainWindow) {
         });
       }
 
-      res.status(200).json({ message: 'Upload successful', path: filePath });
+      res.status(200).json({ success: true, message: 'Stream upload successful', path: filePath });
     });
 
     req.on('error', (err) => {
-      console.error('Upload stream error:', err);
-      res.status(500).send('Upload failed');
+      console.error('Stream error:', err);
+      res.status(500).json({ success: false, error: 'Stream failed' });
     });
+  });
+
+  // Standard multipart fallback route
+  expressApp.post('/upload', upload.single('file'), (req, res) => {
+    if (!req.file) {
+      return res.status(400).send('No file uploaded.');
+    }
+    
+    const filePath = req.file.path;
+    const size = req.file.size;
+    const filename = req.file.filename;
+
+    console.log('File received entirely via multipart:', filePath);
+
+    // Notify frontend
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('file-received', {
+        filename: filename,
+        path: filePath,
+        size: size,
+        date: new Date().toISOString()
+      });
+    }
+
+    res.status(200).json({ message: 'Upload successful', path: filePath });
   });
 
   serverInstance = expressApp.listen(port, '0.0.0.0', () => {
