@@ -20,6 +20,7 @@ let connectedPhones = { '1': null, '2': null };
 let sessionFiles = {}; // e.g., { '01': { '1': 'path1', '2': 'path2' } }
 let jobQueue = [];
 let isProcessing = false;
+let currentToken = null;
 
 // Default save directory
 let saveDirectory = path.join(app.getPath('userData'), 'received-videos');
@@ -204,6 +205,24 @@ function startServer(mainWindow) {
         mWindow.webContents.send('phones-status', getConnectedPhones());
       }
     });
+
+    socket.on('qr_scanned', (data) => {
+      currentToken = data.token;
+      console.log(`QR Scanned: Token ${currentToken}`);
+      io.emit('token_ready', { token: currentToken });
+      if (mWindow && !mWindow.isDestroyed()) {
+        mWindow.webContents.send('token-updated', currentToken);
+      }
+    });
+
+    socket.on('clear_token', () => {
+      currentToken = null;
+      console.log('QR Cleared by client');
+      io.emit('token_ready', { token: null });
+      if (mWindow && !mWindow.isDestroyed()) {
+        mWindow.webContents.send('token-updated', null);
+      }
+    });
   });
 }
 
@@ -226,7 +245,7 @@ function processNextJob() {
 }
 
 function mergeVideos(sessionId, path1, path2) {
-  const mergedPath = path.join(saveDirectory, `Flyxto_Take_${sessionId}.mp4`);
+  const mergedPath = path.join(saveDirectory, `${sessionId}.mp4`);
   console.log(`Starting FFmpeg merge for session ${sessionId}...`);
   console.log(`Inputs: \n1: ${path1} \n2: ${path2}`);
   
@@ -248,8 +267,8 @@ function mergeVideos(sessionId, path1, path2) {
     filter2 += `,trim=start=${delaySec},setpts=PTS-STARTPTS`;
   }
 
-  filter1 += ',scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,setsar=1[v0]';
-  filter2 += ',scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,setsar=1[v1]';
+  filter1 += ',scale=-2:1080,crop=1080:960,setsar=1[v0]';
+  filter2 += ',scale=-2:1080,crop=1080:960,setsar=1[v1]';
 
   ffmpeg()
     .input(path1)
@@ -278,7 +297,7 @@ function mergeVideos(sessionId, path1, path2) {
       if (mWindow && !mWindow.isDestroyed()) {
         mWindow.webContents.send('merge-progress', { takeNumber: sessionId, progress: 100, status: 'Complete' });
         mWindow.webContents.send('file-received', {
-          filename: `Flyxto_Take_${sessionId}.mp4`,
+          filename: `${sessionId}.mp4`,
           path: mergedPath,
           size: size,
           date: new Date().toISOString(),
@@ -303,9 +322,18 @@ function mergeVideos(sessionId, path1, path2) {
 function broadcastCommand(command, payload = {}) {
   if (io) {
     if (command === 'start_record') {
-      const takeNumber = getNextTakeNumber();
-      payload.session = takeNumber;
-      sessionFiles[takeNumber] = {};
+      if (currentToken) {
+        payload.session = currentToken;
+        sessionFiles[currentToken] = {};
+        currentToken = null; // Clear after use
+        if (mWindow && !mWindow.isDestroyed()) {
+          mWindow.webContents.send('token-updated', null);
+        }
+      } else {
+        const takeNumber = getNextTakeNumber();
+        payload.session = takeNumber;
+        sessionFiles[takeNumber] = {};
+      }
     }
     io.emit(command, payload);
     console.log(`Broadcasted command: ${command}`, payload);

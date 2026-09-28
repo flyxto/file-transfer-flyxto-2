@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('api', {
   onQueueUpdated: (callback) => ipcRenderer.on('queue-updated', (event, data) => callback(data)),
   onServerStatusChanged: (callback) => ipcRenderer.on('server-status-changed', (event, status) => callback(status)),
   onPhonesStatus: (callback) => ipcRenderer.on('phones-status', (event, status) => callback(status)),
+  onTokenUpdated: (callback) => ipcRenderer.on('token-updated', (event, token) => callback(token)),
   openPath: (filePath) => ipcRenderer.send('open-path', filePath),
   showItemInFolder: (filePath) => ipcRenderer.send('show-item-in-folder', filePath),
 });

@@ -9,11 +9,14 @@ export default function CameraScreen({ serverIP, phoneId, onReset }) {
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const [micPermission, requestMicPermission] = useMicrophonePermissions();
   const cameraRef = useRef(null);
+  const socketRef = useRef(null);
   
   const [isRecording, setIsRecording] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
   const [uploadStatus, setUploadStatus] = useState('');
   const [uploadProgress, setUploadProgress] = useState(0);
   const [connected, setConnected] = useState(false);
+  const [scannedToken, setScannedToken] = useState(null);
 
   // Lock orientation to Landscape
   useEffect(() => {
@@ -31,6 +34,7 @@ export default function CameraScreen({ serverIP, phoneId, onReset }) {
   // Socket.io Connection & Remote Control
   useEffect(() => {
     const socket = io(`http://${serverIP}:3001`);
+    socketRef.current = socket;
 
     socket.on('connect', () => {
       setConnected(true);
@@ -39,6 +43,10 @@ export default function CameraScreen({ serverIP, phoneId, onReset }) {
 
     socket.on('disconnect', () => {
       setConnected(false);
+    });
+
+    socket.on('token_ready', (data) => {
+      setScannedToken(data.token);
     });
 
     socket.on('start_record', (data) => {
@@ -58,6 +66,7 @@ export default function CameraScreen({ serverIP, phoneId, onReset }) {
       if (cameraRef.current) {
         cameraRef.current.stopRecording();
         setIsRecording(false);
+        // Don't clear token here — wait until upload finishes
       }
     });
 
@@ -78,7 +87,8 @@ export default function CameraScreen({ serverIP, phoneId, onReset }) {
   };
 
   const handleAutoUpload = async (videoUri, sessionId) => {
-    setUploadStatus('Uploading...');
+    setIsUploading(true);
+    setUploadStatus('Syncing...');
     setUploadProgress(0);
 
     const result = await uploadVideo(serverIP, videoUri, (progress) => {
@@ -87,10 +97,31 @@ export default function CameraScreen({ serverIP, phoneId, onReset }) {
 
     if (result.success) {
       setUploadStatus('Upload Complete!');
-      setTimeout(() => setUploadStatus(''), 3000);
+      setTimeout(() => {
+        setUploadStatus('');
+        setIsUploading(false);
+        setScannedToken(null); // Now safe to go back to scanner
+      }, 3000);
     } else {
       setUploadStatus(`Error: ${result.error}`);
+      setTimeout(() => {
+        setUploadStatus('');
+        setIsUploading(false);
+        setScannedToken(null);
+      }, 4000);
     }
+  };
+
+  const handleBarcodeScanned = ({ data }) => {
+    if (data && data.includes('https://roaradx.flyxto.com/reels/')) {
+      const token = data.slice(-4);
+      setScannedToken(token);
+      socketRef.current?.emit('qr_scanned', { token });
+    }
+  };
+
+  const handleClearToken = () => {
+    socketRef.current?.emit('clear_token');
   };
 
   if (!cameraPermission || !micPermission) {
@@ -118,6 +149,37 @@ export default function CameraScreen({ serverIP, phoneId, onReset }) {
     );
   }
 
+  if (!scannedToken && !isUploading) {
+    return (
+      <View style={styles.container}>
+        <CameraView 
+          style={styles.camera} 
+          facing="back"
+          mode="video"
+          barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
+          onBarcodeScanned={handleBarcodeScanned}
+        />
+        {/* Top bar overlay */}
+        <View style={styles.overlay}>
+          <View style={styles.topBar}>
+            <View style={styles.statusBox}>
+              <View style={[styles.dot, connected ? styles.dotGreen : styles.dotRed]} />
+              <Text style={styles.statusText}>Phone {phoneId} - {connected ? 'Connected' : 'Disconnected'}</Text>
+            </View>
+            <TouchableOpacity style={styles.disconnectBtn} onPress={onReset}>
+              <Text style={styles.disconnectText}>Leave Studio</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+        {/* Scanner frame centered on full screen, sibling to overlay */}
+        <View style={styles.scannerCenter} pointerEvents="none">
+          <View style={styles.scannerFrame} />
+          <Text style={styles.scannerText}>Scan QR Code to Start Session</Text>
+        </View>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container}>
       <CameraView 
@@ -129,17 +191,40 @@ export default function CameraScreen({ serverIP, phoneId, onReset }) {
         videoStabilizationMode="standard"
         mute={true}
       />
+
+      {/* Rectangular mask overlay matching 1080x960 crop on 1920x1080 screen */}
+      <View style={styles.maskContainer} pointerEvents="none">
+        <View style={styles.maskTopBottom} />
+        <View style={styles.maskMiddleRow}>
+          <View style={styles.maskSide} />
+          <View style={styles.maskCenter} />
+          <View style={styles.maskSide} />
+        </View>
+        <View style={styles.maskTopBottom} />
+      </View>
       
       {/* Overlay Status */}
       <View style={styles.overlay}>
         <View style={styles.topBar}>
           <View style={styles.statusBox}>
             <View style={[styles.dot, connected ? styles.dotGreen : styles.dotRed]} />
-            <Text style={styles.statusText}>Phone {phoneId} - {connected ? 'Connected' : 'Disconnected'}</Text>
+            <Text style={styles.statusText}>Phone {phoneId}</Text>
           </View>
-          <TouchableOpacity style={styles.disconnectBtn} onPress={onReset}>
-            <Text style={styles.disconnectText}>Leave Studio</Text>
-          </TouchableOpacity>
+          
+          <View style={styles.tokenBox}>
+            <Text style={styles.tokenText}>Ready: {scannedToken}</Text>
+          </View>
+          
+          <View style={{flexDirection: 'row'}}>
+            {!isRecording && (
+              <TouchableOpacity style={styles.clearBtn} onPress={handleClearToken}>
+                <Text style={styles.clearBtnText}>Clear QR</Text>
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity style={styles.disconnectBtn} onPress={onReset}>
+              <Text style={styles.disconnectText}>Leave</Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
         {isRecording && (
@@ -152,7 +237,7 @@ export default function CameraScreen({ serverIP, phoneId, onReset }) {
         {uploadStatus ? (
           <View style={styles.uploadOverlay}>
             <Text style={styles.uploadText}>{uploadStatus}</Text>
-            {uploadStatus === 'Uploading...' && (
+            {uploadStatus === 'Syncing...' && (
               <View style={styles.progressBarBg}>
                 <View style={[styles.progressBarFill, { width: `${uploadProgress}%` }]} />
               </View>
@@ -205,6 +290,29 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontWeight: 'bold',
   },
+  tokenBox: {
+    backgroundColor: 'rgba(10, 132, 255, 0.8)',
+    paddingHorizontal: 15,
+    paddingVertical: 10,
+    borderRadius: 20,
+    marginHorizontal: 10,
+  },
+  tokenText: {
+    color: '#fff',
+    fontWeight: 'bold',
+    fontSize: 16,
+  },
+  clearBtn: {
+    backgroundColor: 'rgba(255, 159, 10, 0.8)',
+    paddingHorizontal: 15,
+    paddingVertical: 10,
+    borderRadius: 15,
+    marginRight: 10,
+  },
+  clearBtnText: {
+    color: '#fff',
+    fontWeight: 'bold',
+  },
   disconnectBtn: {
     backgroundColor: 'rgba(255, 69, 58, 0.8)',
     paddingHorizontal: 15,
@@ -214,6 +322,53 @@ const styles = StyleSheet.create({
   disconnectText: {
     color: '#fff',
     fontWeight: 'bold',
+  },
+  scannerCenter: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    left: 0,
+    right: 0,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  scannerFrame: {
+    width: 250,
+    height: 250,
+    borderWidth: 2,
+    borderColor: '#0a84ff',
+    borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+  },
+  scannerText: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginTop: 20,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    padding: 10,
+    borderRadius: 10,
+  },
+  maskContainer: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 5,
+  },
+  maskTopBottom: {
+    flex: 60, // (1080 - 960) / 2
+    backgroundColor: 'rgba(0,0,0,0.6)',
+  },
+  maskMiddleRow: {
+    flex: 960,
+    flexDirection: 'row',
+  },
+  maskSide: {
+    flex: 420, // (1920 - 1080) / 2
+    backgroundColor: 'rgba(0,0,0,0.6)',
+  },
+  maskCenter: {
+    flex: 1080,
+    borderWidth: 2,
+    borderColor: 'rgba(255,255,255,0.4)',
   },
   recordingIndicator: {
     position: 'absolute',

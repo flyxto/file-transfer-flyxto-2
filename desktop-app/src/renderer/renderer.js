@@ -8,6 +8,8 @@ const savePathDisplay = document.getElementById('save-path');
 const statusBadge = document.getElementById('status-badge');
 const filesBody = document.getElementById('files-body');
 const fileCount = document.getElementById('file-count');
+const tokenBadge = document.getElementById('token-badge');
+const currentTokenDisplay = document.getElementById('current-token');
 
 const btnMasterRecord = document.getElementById('btn-master-record');
 const btnMasterStop = document.getElementById('btn-master-stop');
@@ -60,6 +62,17 @@ async function init() {
   // Listen for received files
   window.api.onFileReceived((fileData) => {
     addFileToList(fileData);
+  });
+
+  // Listen for token updates
+  window.api.onTokenUpdated((token) => {
+    if (token) {
+      tokenBadge.style.display = 'flex';
+      currentTokenDisplay.innerText = token;
+    } else {
+      tokenBadge.style.display = 'none';
+      currentTokenDisplay.innerText = '--';
+    }
   });
 
   function updateQueueVisibility() {

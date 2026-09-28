@@ -32,7 +32,8 @@
         {
           "cameraPermission": "Allow this app to access your camera to record video for transfer.",
           "microphonePermission": "Allow this app to access your microphone to record audio with your video.",
-          "recordAudioAndroid": true
+          "recordAudioAndroid": true,
+          "barcodeScannerEnabled": true
         }
       ]
     ],
