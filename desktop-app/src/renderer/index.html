@@ -40,9 +40,17 @@
         </div>
         
         <div class="header-settings" style="display: flex; flex-direction: column; gap: 8px; border-left: 1px solid hsl(var(--border)); padding-left: 20px;">
-          <div style="display: flex; align-items: center; gap: 8px;">
-            <div class="save-path-box" id="save-path" title="" style="margin: 0; max-width: 150px; display: inline-block;">--</div>
-            <button class="btn secondary small" id="btn-change-folder">Change Folder</button>
+          <div style="display: flex; flex-direction: column; gap: 8px;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span style="font-size: 0.75rem; width: 45px; color: hsl(var(--muted-foreground));">Raw:</span>
+              <div class="save-path-box" id="save-path" title="" style="margin: 0; max-width: 100px; display: inline-block;">--</div>
+              <button class="btn secondary small" id="btn-change-folder">Change</button>
+            </div>
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span style="font-size: 0.75rem; width: 45px; color: hsl(var(--muted-foreground));">Merged:</span>
+              <div class="save-path-box" id="merged-path" title="" style="margin: 0; max-width: 100px; display: inline-block;">--</div>
+              <button class="btn secondary small" id="btn-change-merged-folder">Change</button>
+            </div>
           </div>
           <div style="display: flex; gap: 8px; width: 100%;">
             <button class="btn primary small" id="btn-start-server" style="flex: 1;">Start Server</button>
@@ -84,6 +92,51 @@
                 <span>Perfect Sync</span>
                 <span>Trim Phone 1 (P2 lags)</span>
               </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ESP32 Settings Panel -->
+        <div class="glass-panel esp32-settings" style="margin-top: 0.5rem; padding: 1rem;">
+          <div class="section-header" style="margin-bottom: 0.75rem;">
+            <h2>ESP32 Settings (Triggers)</h2>
+            <div id="serial-status" style="font-size: 0.85rem; padding: 2px 8px; border-radius: 10px; background: rgba(255, 69, 58, 0.2); color: #ff453a;">Disconnected</div>
+          </div>
+          <div style="display: flex; gap: 1rem; align-items: flex-end; flex-wrap: wrap;">
+            <div style="flex: 1; min-width: 120px;">
+              <label for="com-port" style="display: block; font-size: 0.8rem; margin-bottom: 4px; color: hsl(var(--muted-foreground));">COM Port</label>
+              <div style="display: flex; gap: 4px;">
+                <select id="com-port" style="flex: 1; padding: 6px; border-radius: 4px; border: 1px solid hsl(var(--border)); background: rgba(0,0,0,0.2); color: white;">
+                  <option value="">Select Port</option>
+                </select>
+                <button class="btn secondary small" id="btn-refresh-ports" title="Refresh Ports" style="padding: 6px 10px;">↻</button>
+              </div>
+            </div>
+            <div style="flex: 1; min-width: 100px;">
+              <label for="baud-rate" style="display: block; font-size: 0.8rem; margin-bottom: 4px; color: hsl(var(--muted-foreground));">Baud Rate</label>
+              <select id="baud-rate" style="width: 100%; padding: 6px; border-radius: 4px; border: 1px solid hsl(var(--border)); background: rgba(0,0,0,0.2); color: white;">
+                <option value="9600">9600</option>
+                <option value="19200">19200</option>
+                <option value="38400">38400</option>
+                <option value="57600">57600</option>
+                <option value="115200" selected>115200</option>
+              </select>
+            </div>
+            <div style="flex: 1; min-width: 120px;">
+              <label for="max-rec-time" style="display: block; font-size: 0.8rem; margin-bottom: 4px; color: hsl(var(--muted-foreground));">Max Time (s)</label>
+              <input type="number" id="max-rec-time" value="60" style="width: 100%; padding: 6px; border-radius: 4px; border: 1px solid hsl(var(--border)); background: rgba(0,0,0,0.2); color: white;">
+            </div>
+            <div style="flex: 1; min-width: 120px;">
+              <label for="max-chances" style="display: block; font-size: 0.8rem; margin-bottom: 4px; color: hsl(var(--muted-foreground));">Max Chances</label>
+              <input type="number" id="max-chances" value="3" style="width: 100%; padding: 6px; border-radius: 4px; border: 1px solid hsl(var(--border)); background: rgba(0,0,0,0.2); color: white;">
+            </div>
+            <div style="flex: 1; min-width: 120px;">
+              <label for="stop-delay" style="display: block; font-size: 0.8rem; margin-bottom: 4px; color: hsl(var(--muted-foreground));">Stop Delay (s)</label>
+              <input type="number" id="stop-delay" value="3" style="width: 100%; padding: 6px; border-radius: 4px; border: 1px solid hsl(var(--border)); background: rgba(0,0,0,0.2); color: white;">
+            </div>
+            <div style="display: flex; gap: 8px;">
+              <button class="btn primary small" id="btn-connect-serial">Connect</button>
+              <button class="btn secondary small" id="btn-save-esp-settings">Save Config</button>
             </div>
           </div>
         </div>
@@ -147,6 +200,9 @@
     </main>
   </div>
   
+  <audio id="audio-start" src="../../assets/audio/start.mpeg" preload="auto"></audio>
+  <audio id="audio-wire" src="../../assets/audio/wire_contact.mpeg" preload="auto"></audio>
+  <audio id="audio-stop" src="../../assets/audio/stop.mpeg" preload="auto"></audio>
   <script src="renderer.js"></script>
 </body>
 </html>

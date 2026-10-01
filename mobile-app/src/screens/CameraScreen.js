@@ -18,6 +18,64 @@ export default function CameraScreen({ serverIP, phoneId, onReset }) {
   const [connected, setConnected] = useState(false);
   const [scannedToken, setScannedToken] = useState(null);
 
+  // ESP32 state variables
+  const [isStopping, setIsStopping] = useState(false);
+  const [chancesUsed, setChancesUsed] = useState(0);
+  const [settings, setSettings] = useState({
+    maxRecordingTime: 60, // Default 60 seconds
+    maxChances: 3,        // Default 3 chances
+    stopDelayTime: 3      // Default 3 seconds delay
+  });
+
+  const recordingTimerRef = useRef(null);
+  const stopDelayTimerRef = useRef(null);
+  
+  const stateRef = useRef({
+    isSessionActive: false,
+    isRecording: false,
+    isStopping: false,
+    chancesUsed: 0,
+    settings: { maxRecordingTime: 60, maxChances: 3, stopDelayTime: 3 },
+    scannedToken: null
+  });
+
+  useEffect(() => {
+    stateRef.current.isSessionActive = !!scannedToken;
+    stateRef.current.isRecording = isRecording;
+    stateRef.current.isStopping = isStopping;
+    stateRef.current.chancesUsed = chancesUsed;
+    stateRef.current.settings = settings;
+    stateRef.current.scannedToken = scannedToken;
+  }, [scannedToken, isRecording, isStopping, chancesUsed, settings]);
+
+  const playSound = (type) => {
+    socketRef.current?.emit('play_sound', type);
+  };
+
+  const initiateStopSequence = () => {
+    if (stateRef.current.isStopping) return;
+    
+    setIsStopping(true);
+    stateRef.current.isStopping = true;
+    
+    playSound('stop');
+
+    if (recordingTimerRef.current) {
+      clearTimeout(recordingTimerRef.current);
+      recordingTimerRef.current = null;
+    }
+
+    const delayMs = stateRef.current.settings.stopDelayTime * 1000;
+    stopDelayTimerRef.current = setTimeout(() => {
+      if (cameraRef.current && stateRef.current.isRecording) {
+        cameraRef.current.stopRecording();
+        setIsRecording(false);
+        setIsStopping(false);
+        setChancesUsed(0);
+      }
+    }, delayMs);
+  };
+
   // Lock orientation to Landscape
   useEffect(() => {
     async function lockOrientation() {
@@ -50,7 +108,7 @@ export default function CameraScreen({ serverIP, phoneId, onReset }) {
     });
 
     socket.on('start_record', (data) => {
-      if (cameraRef.current) {
+      if (cameraRef.current && !stateRef.current.isRecording) {
         setIsRecording(true);
         setUploadStatus('');
         cameraRef.current.recordAsync().then((video) => {
@@ -63,10 +121,56 @@ export default function CameraScreen({ serverIP, phoneId, onReset }) {
     });
 
     socket.on('stop_record', () => {
-      if (cameraRef.current) {
-        cameraRef.current.stopRecording();
-        setIsRecording(false);
-        // Don't clear token here — wait until upload finishes
+      initiateStopSequence();
+    });
+
+    socket.on('update_settings', (newSettings) => {
+      setSettings(prev => ({ ...prev, ...newSettings }));
+    });
+
+    socket.on('button_pressed', () => {
+      const state = stateRef.current;
+      if (!state.isSessionActive) return;
+
+      if (!state.isRecording && !state.isStopping) {
+        if (cameraRef.current) {
+          setIsRecording(true);
+          setChancesUsed(0);
+          setUploadStatus('');
+          state.isRecording = true; // Update immediately for ref
+
+          playSound('start');
+
+          cameraRef.current.recordAsync().then((video) => {
+            handleAutoUpload(video.uri, state.scannedToken || 'unknown');
+          }).catch(err => {
+            console.error("Recording error:", err);
+            setIsRecording(false);
+          });
+
+          // Start countdown timer
+          const maxTimeMs = state.settings.maxRecordingTime * 1000;
+          recordingTimerRef.current = setTimeout(() => {
+            initiateStopSequence();
+          }, maxTimeMs);
+        }
+      } else if (state.isRecording && !state.isStopping) {
+        initiateStopSequence();
+      }
+    });
+
+    socket.on('wire_contact', () => {
+      const state = stateRef.current;
+      if (!state.isRecording || state.isStopping) return;
+
+      playSound('wire');
+
+      const newChances = state.chancesUsed + 1;
+      setChancesUsed(newChances);
+      state.chancesUsed = newChances;
+
+      if (newChances >= state.settings.maxChances) {
+        initiateStopSequence();
       }
     });
 

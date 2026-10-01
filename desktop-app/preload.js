@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('api', {
   startServer: () => ipcRenderer.send('start-server'),
   stopServer: () => ipcRenderer.send('stop-server'),
   selectDirectory: () => ipcRenderer.invoke('select-directory'),
+  selectMergedDirectory: () => ipcRenderer.invoke('select-merged-directory'),
   startRecording: () => ipcRenderer.send('start-recording'),
   stopRecording: () => ipcRenderer.send('stop-recording'),
   setSyncOffset: (offset) => ipcRenderer.send('set-sync-offset', offset),
@@ -16,4 +17,12 @@ contextBridge.exposeInMainWorld('api', {
   onTokenUpdated: (callback) => ipcRenderer.on('token-updated', (event, token) => callback(token)),
   openPath: (filePath) => ipcRenderer.send('open-path', filePath),
   showItemInFolder: (filePath) => ipcRenderer.send('show-item-in-folder', filePath),
+  
+  // ESP32 Methods
+  connectSerial: (port) => ipcRenderer.invoke('connect-serial', port),
+  saveEspSettings: (settings) => ipcRenderer.send('save-esp-settings', settings),
+  onSerialStatusChanged: (callback) => ipcRenderer.on('serial-status', (event, status) => callback(status)),
+  getEspSettings: () => ipcRenderer.invoke('get-esp-settings'),
+  getSerialPorts: () => ipcRenderer.invoke('get-serial-ports'),
+  onPlaySound: (callback) => ipcRenderer.on('play-sound', (event, type) => callback(type)),
 });

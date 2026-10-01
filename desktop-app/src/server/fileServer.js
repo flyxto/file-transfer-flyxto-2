@@ -24,6 +24,7 @@ let currentToken = null;
 
 // Default save directory
 let saveDirectory = path.join(app.getPath('userData'), 'received-videos');
+let mergedDirectory = path.join(app.getPath('userData'), 'merged-videos');
 
 function setSaveDirectory(newPath) {
   saveDirectory = newPath;
@@ -32,9 +33,19 @@ function setSaveDirectory(newPath) {
   }
 }
 
+function setMergedDirectory(newPath) {
+  mergedDirectory = newPath;
+  if (!fs.existsSync(mergedDirectory)) {
+    fs.mkdirSync(mergedDirectory, { recursive: true });
+  }
+}
+
 // Ensure directory exists initially
 if (!fs.existsSync(saveDirectory)) {
   fs.mkdirSync(saveDirectory, { recursive: true });
+}
+if (!fs.existsSync(mergedDirectory)) {
+  fs.mkdirSync(mergedDirectory, { recursive: true });
 }
 
 // Persistent History Tracker
@@ -223,6 +234,12 @@ function startServer(mainWindow) {
         mWindow.webContents.send('token-updated', null);
       }
     });
+
+    socket.on('play_sound', (type) => {
+      if (mWindow && !mWindow.isDestroyed()) {
+        mWindow.webContents.send('play-sound', type);
+      }
+    });
   });
 }
 
@@ -245,7 +262,7 @@ function processNextJob() {
 }
 
 function mergeVideos(sessionId, path1, path2) {
-  const mergedPath = path.join(saveDirectory, `${sessionId}.mp4`);
+  const mergedPath = path.join(mergedDirectory, `${sessionId}.mp4`);
   console.log(`Starting FFmpeg merge for session ${sessionId}...`);
   console.log(`Inputs: \n1: ${path1} \n2: ${path2}`);
   
@@ -366,6 +383,7 @@ function getServerStatus() {
     ip: getLocalIP(),
     port: port,
     saveDirectory: saveDirectory,
+    mergedDirectory: mergedDirectory,
   };
 }
 
@@ -376,5 +394,6 @@ module.exports = {
   broadcastCommand,
   getConnectedPhones,
   setSyncOffset,
-  setSaveDirectory
+  setSaveDirectory,
+  setMergedDirectory
 };

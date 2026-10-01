@@ -1,10 +1,12 @@
 const btnStart = document.getElementById('btn-start-server');
 const btnStop = document.getElementById('btn-stop-server');
 const btnChangeFolder = document.getElementById('btn-change-folder');
+const btnChangeMergedFolder = document.getElementById('btn-change-merged-folder');
 const ipDisplay = document.getElementById('ip-address');
 const portDisplay = document.getElementById('port');
 const tcpPortDisplay = document.getElementById('tcp-port');
 const savePathDisplay = document.getElementById('save-path');
+const mergedPathDisplay = document.getElementById('merged-path');
 const statusBadge = document.getElementById('status-badge');
 const filesBody = document.getElementById('files-body');
 const fileCount = document.getElementById('file-count');
@@ -155,6 +157,10 @@ function updateStatusUI(status) {
   portDisplay.innerText = status.port;
   savePathDisplay.innerText = status.saveDirectory;
   savePathDisplay.title = status.saveDirectory;
+  if (status.mergedDirectory && mergedPathDisplay) {
+    mergedPathDisplay.innerText = status.mergedDirectory;
+    mergedPathDisplay.title = status.mergedDirectory;
+  }
 
   // Show TCP port if available
   if (status.tcp) {
@@ -236,4 +242,103 @@ btnChangeFolder.addEventListener('click', async () => {
   }
 });
 
+btnChangeMergedFolder.addEventListener('click', async () => {
+  const newPath = await window.api.selectMergedDirectory();
+  if (newPath) {
+    // Dynamically update the UI
+    const updatedStatus = await window.api.getServerStatus();
+    updateStatusUI(updatedStatus);
+  }
+});
+
+// ESP32 UI Logic
+const btnConnectSerial = document.getElementById('btn-connect-serial');
+const btnSaveEspSettings = document.getElementById('btn-save-esp-settings');
+const btnRefreshPorts = document.getElementById('btn-refresh-ports');
+const comPortSelect = document.getElementById('com-port');
+const serialStatus = document.getElementById('serial-status');
+
+async function refreshSerialPorts(selectedPort = null) {
+  const ports = await window.api.getSerialPorts();
+  comPortSelect.innerHTML = '<option value="">Select Port</option>';
+  ports.forEach(port => {
+    const opt = document.createElement('option');
+    opt.value = port;
+    opt.innerText = port;
+    comPortSelect.appendChild(opt);
+  });
+  if (selectedPort && ports.includes(selectedPort)) {
+    comPortSelect.value = selectedPort;
+  }
+}
+
+btnRefreshPorts.addEventListener('click', async () => {
+  await refreshSerialPorts(comPortSelect.value);
+});
+
+btnConnectSerial.addEventListener('click', async () => {
+  const port = comPortSelect.value;
+  const baudRate = parseInt(document.getElementById('baud-rate').value, 10);
+  if (!port) {
+    serialStatus.innerText = 'Select a port first';
+    return;
+  }
+  serialStatus.innerText = 'Connecting...';
+  serialStatus.style.color = '#ff9f0a';
+  await window.api.connectSerial({ port, baudRate });
+});
+
+btnSaveEspSettings.addEventListener('click', () => {
+  const settings = {
+    maxRecordingTime: parseInt(document.getElementById('max-rec-time').value, 10),
+    maxChances: parseInt(document.getElementById('max-chances').value, 10),
+    stopDelayTime: parseInt(document.getElementById('stop-delay').value, 10),
+    baudRate: parseInt(document.getElementById('baud-rate').value, 10)
+  };
+  window.api.saveEspSettings(settings);
+});
+
+window.api.onSerialStatusChanged((status) => {
+  serialStatus.innerText = status.message;
+  serialStatus.style.color = status.connected ? '#30d158' : '#ff453a';
+});
+
+window.api.onPlaySound((type) => {
+  try {
+    const audioEl = document.getElementById(`audio-${type}`);
+    if (audioEl) {
+      audioEl.currentTime = 0;
+      audioEl.play().catch(e => console.error('Audio play blocked/failed:', e));
+    }
+  } catch (err) {
+    console.error('Failed to play sound:', err);
+  }
+
+  // Sync dashboard button state with serial triggers
+  if (type === 'start') {
+    isRecording = true;
+    btnMasterRecord.classList.add('hidden');
+    btnMasterStop.classList.remove('hidden');
+  } else if (type === 'stop') {
+    isRecording = false;
+    btnMasterStop.classList.add('hidden');
+    btnMasterRecord.classList.remove('hidden');
+  }
+});
+
+async function loadEspSettings() {
+  const settings = await window.api.getEspSettings();
+  if (settings) {
+    if (settings.maxRecordingTime) document.getElementById('max-rec-time').value = settings.maxRecordingTime;
+    if (settings.maxChances) document.getElementById('max-chances').value = settings.maxChances;
+    if (settings.stopDelayTime) document.getElementById('stop-delay').value = settings.stopDelayTime;
+    if (settings.baudRate) document.getElementById('baud-rate').value = settings.baudRate;
+    
+    await refreshSerialPorts(settings.comPort);
+  } else {
+    await refreshSerialPorts();
+  }
+}
+
 init();
+loadEspSettings();
