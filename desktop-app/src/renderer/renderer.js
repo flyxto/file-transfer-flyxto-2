@@ -12,6 +12,7 @@ const filesBody = document.getElementById('files-body');
 const fileCount = document.getElementById('file-count');
 const tokenBadge = document.getElementById('token-badge');
 const currentTokenDisplay = document.getElementById('current-token');
+const recordingTimerDisplay = document.getElementById('recording-timer');
 
 const btnMasterRecord = document.getElementById('btn-master-record');
 const btnMasterStop = document.getElementById('btn-master-stop');
@@ -30,6 +31,34 @@ const processingEmptyState = document.getElementById('processing-empty-state');
 
 let receivedFiles = [];
 let isRecording = false;
+let recordingInterval = null;
+let recordingSeconds = 0;
+
+function formatTime(totalSeconds) {
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+}
+
+function startTimer() {
+  recordingSeconds = 0;
+  recordingTimerDisplay.innerText = "00:00";
+  recordingTimerDisplay.style.display = "block";
+  
+  if (recordingInterval) clearInterval(recordingInterval);
+  recordingInterval = setInterval(() => {
+    recordingSeconds++;
+    recordingTimerDisplay.innerText = formatTime(recordingSeconds);
+  }, 1000);
+}
+
+function stopTimer() {
+  if (recordingInterval) {
+    clearInterval(recordingInterval);
+    recordingInterval = null;
+  }
+  recordingTimerDisplay.style.display = "none";
+}
 
 // Sync Slider Event
 syncSlider.addEventListener('input', (e) => {
@@ -142,6 +171,7 @@ btnMasterRecord.addEventListener('click', () => {
   isRecording = true;
   btnMasterRecord.classList.add('hidden');
   btnMasterStop.classList.remove('hidden');
+  startTimer();
   window.api.startRecording();
 });
 
@@ -149,6 +179,7 @@ btnMasterStop.addEventListener('click', () => {
   isRecording = false;
   btnMasterStop.classList.add('hidden');
   btnMasterRecord.classList.remove('hidden');
+  stopTimer();
   window.api.stopRecording();
 });
 
@@ -319,10 +350,12 @@ window.api.onPlaySound((type) => {
     isRecording = true;
     btnMasterRecord.classList.add('hidden');
     btnMasterStop.classList.remove('hidden');
+    startTimer();
   } else if (type === 'stop') {
     isRecording = false;
     btnMasterStop.classList.add('hidden');
     btnMasterRecord.classList.remove('hidden');
+    stopTimer();
   }
 });
 
